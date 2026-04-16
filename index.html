@@ -23,6 +23,13 @@
         
         /* QR Code 平滑縮放 */
         #qr-code-img { transition: width 0.3s, height 0.3s; }
+        
+        /* 全螢幕背景色 */
+        #presentation-fullscreen-wrapper:fullscreen {
+            background-color: white;
+            padding: 2rem;
+            overflow-y: auto;
+        }
     </style>
 </head>
 <body class="min-h-screen bg-slate-100 text-slate-800 font-sans">
@@ -150,10 +157,10 @@
             <!-- 即時呈現分頁 -->
             <div id="tab-content-present" class="hidden grid grid-cols-1 lg:grid-cols-4 gap-8">
                 <!-- 大螢幕呈現區 -->
-                <div class="lg:col-span-3 bg-white p-8 md:p-12 rounded-3xl shadow-sm min-h-[600px] flex flex-col justify-center relative overflow-y-auto overflow-x-hidden no-scrollbar group">
+                <div id="presentation-fullscreen-wrapper" class="lg:col-span-3 bg-white p-8 md:p-12 rounded-3xl shadow-sm min-h-[600px] flex flex-col justify-center relative overflow-y-auto overflow-x-hidden no-scrollbar group">
                     <div class="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500"></div>
                     
-                    <!-- 圖表縮放控制 -->
+                    <!-- 圖表縮放與全螢幕控制 -->
                     <div class="absolute top-6 right-6 flex items-center justify-center gap-2 bg-white/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-gray-200 shadow-sm z-10 opacity-30 group-hover:opacity-100 transition-opacity">
                         <button onclick="window.zoomPresentation(-10)" class="p-1 text-gray-500 hover:bg-gray-100 rounded-full transition-colors" title="縮小統計圖表">
                             <i data-lucide="minus" class="w-4 h-4"></i>
@@ -165,6 +172,10 @@
                         <div class="w-px h-3 bg-gray-300 mx-0.5"></div>
                         <button onclick="window.resetZoomPresentation()" class="p-1 text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors" title="還原大小">
                             <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                        </button>
+                        <div class="w-px h-3 bg-gray-300 mx-0.5"></div>
+                        <button onclick="window.togglePresentationFullScreen()" class="p-1 text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors" title="全螢幕顯示">
+                            <i data-lucide="expand" class="w-4 h-4"></i>
                         </button>
                     </div>
 
@@ -282,6 +293,7 @@
             presentationArea: document.getElementById('presentation-area'),
             presentationScaleWrapper: document.getElementById('presentation-scale-wrapper'),
             presentationSizeLabel: document.getElementById('presentation-size-label'),
+            presentationFullscreenWrapper: document.getElementById('presentation-fullscreen-wrapper'),
             participantContent: document.getElementById('participant-content'),
             qrCodeImg: document.getElementById('qr-code-img'),
             qrFullscreenImg: document.getElementById('qr-fullscreen-img'),
@@ -389,6 +401,17 @@
         // 後台管理功能 (Admin)
         // ==========================================
         
+        // 圖表全螢幕控制
+        window.togglePresentationFullScreen = () => {
+            if (!document.fullscreenElement) {
+                els.presentationFullscreenWrapper.requestFullscreen().catch(err => {
+                    window.showToast(`無法切換為全螢幕模式: ${err.message}`, "error");
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        };
+
         window.zoomPresentation = (delta) => {
             state.presentationScale += delta;
             if (state.presentationScale < 50) state.presentationScale = 50; // 最小 50%
