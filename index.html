@@ -98,15 +98,23 @@
                                 </div>
                             </div>
                             
-                            <!-- 允許填寫「其他」選項 -->
-                            <div class="bg-gray-50 p-3 rounded-lg border border-gray-100 flex items-center">
-                                <input type="checkbox" id="allow-other-checkbox" class="w-4 h-4 text-indigo-600 bg-gray-100 border-gray-300 rounded focus:ring-indigo-500">
-                                <label for="allow-other-checkbox" class="ml-2 text-sm font-medium text-gray-700 cursor-pointer select-none flex-1">
-                                    允許參與者填寫「其他」文字
-                                </label>
+                            <!-- 題目進階設定 (其他 / 多選) -->
+                            <div class="flex flex-col gap-3 mt-4">
+                                <div class="bg-gray-50 p-3 rounded-lg border border-gray-100 flex items-center">
+                                    <input type="checkbox" id="allow-other-checkbox" class="w-4 h-4 text-indigo-600 bg-gray-100 border-gray-300 rounded focus:ring-indigo-500">
+                                    <label for="allow-other-checkbox" class="ml-2 text-sm font-medium text-gray-700 cursor-pointer select-none flex-1">
+                                        允許參與者填寫「其他」文字
+                                    </label>
+                                </div>
+                                <div class="bg-gray-50 p-3 rounded-lg border border-gray-100 flex items-center">
+                                    <input type="checkbox" id="allow-multiple-checkbox" class="w-4 h-4 text-indigo-600 bg-gray-100 border-gray-300 rounded focus:ring-indigo-500">
+                                    <label for="allow-multiple-checkbox" class="ml-2 text-sm font-medium text-gray-700 cursor-pointer select-none flex-1">
+                                        允許多選 (複選題)
+                                    </label>
+                                </div>
                             </div>
 
-                            <button onclick="window.handleAddQuestion()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 rounded-xl transition-colors shadow-md hover:shadow-lg">
+                            <button onclick="window.handleAddQuestion()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 rounded-xl transition-colors shadow-md hover:shadow-lg mt-2">
                                 儲存並新增題目
                             </button>
                         </div>
@@ -209,8 +217,6 @@
         // ==========================================
         // 全域狀態與變數
         // ==========================================
-		// Your web app's Firebase configuration
-		// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 		const firebaseConfig = {
 			apiKey: "AIzaSyA2yYtQ54ndvkWUN-umbMGsIHR4iUfsvH4",
 			authDomain: "wzuiitc.firebaseapp.com",
@@ -220,7 +226,6 @@
 			appId: "1:273964264280:web:a04fc0ebd007b973f0932d",
 			measurementId: "G-LHNPL9JDDY"
 		};
-		// 你可以自訂一個字串作為這個問卷系統的專屬資料夾名稱
 		const appId = 'my-survey-system-v1';
         
         const app = initializeApp(firebaseConfig);
@@ -235,7 +240,13 @@
             newQuestionOptions: ["", ""],
             isSubmitting: false,
             activeTab: 'manage',
-            qrSize: 192 // 預設 192px (100%)
+            qrSize: 192,
+            
+            // 參與者專用狀態（防止重繪干擾）
+            lastRenderedQid: null,
+            lastRenderedAnswerState: null,
+            selectedOptions: [], // 存放使用者選擇的多選項目 (包含 'other')
+            otherText: ''        // 存放使用者的其他文字
         };
 
         // DOM 元素快取
@@ -294,7 +305,12 @@
         const authSetup = async () => {
             try {
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
+                    try {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } catch (tokenError) {
+                        console.warn("Token 驗證失敗 (可能是因為使用了自訂的 Firebase 設定)，自動改用匿名登入...", tokenError);
+                        await signInAnonymously(auth);
+                    }
                 } else {
                     await signInAnonymously(auth);
                 }
@@ -344,7 +360,6 @@
             } else {
                 renderParticipantArea();
             }
-            // 等待 DOM 渲染完畢後產生圖示
             setTimeout(() => lucide.createIcons(), 0);
         };
 
@@ -352,11 +367,10 @@
         // 後台管理功能 (Admin)
         // ==========================================
         
-        // QR Code 縮放邏輯
         window.zoomQR = (delta) => {
             state.qrSize += delta;
-            if (state.qrSize < 100) state.qrSize = 100; // 最小限制
-            if (state.qrSize > 350) state.qrSize = 350; // 最大限制
+            if (state.qrSize < 100) state.qrSize = 100;
+            if (state.qrSize > 350) state.qrSize = 350;
             
             els.qrCodeImg.style.width = `${state.qrSize}px`;
             els.qrCodeImg.style.height = `${state.qrSize}px`;
@@ -371,10 +385,8 @@
 
         window.switchTab = (tabName) => {
             state.activeTab = tabName;
-            
             document.getElementById('tab-manage').className = `px-6 py-2 rounded-md font-medium transition-colors ${tabName === 'manage' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`;
             document.getElementById('tab-present').className = `px-6 py-2 rounded-md font-medium transition-colors ${tabName === 'present' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`;
-            
             document.getElementById('tab-content-manage').style.display = tabName === 'manage' ? 'grid' : 'none';
             document.getElementById('tab-content-present').style.display = tabName === 'present' ? 'grid' : 'none';
         };
@@ -401,8 +413,11 @@
         window.handleAddQuestion = async () => {
             const textInput = document.getElementById('new-question-text');
             const allowOtherCheckbox = document.getElementById('allow-other-checkbox');
+            const allowMultipleCheckbox = document.getElementById('allow-multiple-checkbox');
+            
             const text = textInput.value.trim();
             const allowOther = allowOtherCheckbox.checked;
+            const allowMultiple = allowMultipleCheckbox.checked;
             const validOptions = state.newQuestionOptions.filter(opt => opt.trim() !== "");
 
             if (!text || validOptions.length < 2) {
@@ -410,7 +425,7 @@
                 return;
             }
 
-            const newQ = { id: `q_${Date.now()}`, text, options: validOptions, allowOther };
+            const newQ = { id: `q_${Date.now()}`, text, options: validOptions, allowOther, allowMultiple };
             const updatedQuestions = [...(state.sessionData.questions || []), newQ];
             
             try {
@@ -420,6 +435,7 @@
                 // 重置表單
                 textInput.value = "";
                 allowOtherCheckbox.checked = false;
+                allowMultipleCheckbox.checked = false;
                 state.newQuestionOptions = ["", ""];
                 renderOptionsInputs();
                 window.showToast("題目已新增");
@@ -485,7 +501,12 @@
                                 <div class="flex flex-wrap gap-2 mb-2">
                                     ${q.options.map(opt => `<span class="bg-white border border-gray-200 text-sm px-3 py-1 rounded-full text-gray-600">${escapeHtml(opt)}</span>`).join('')}
                                 </div>
-                                ${q.allowOther ? `<span class="inline-flex items-center text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-1 rounded border border-indigo-100"><i data-lucide="pen-line" class="w-3 h-3 mr-1"></i> 包含「其他」填充</span>` : ''}
+                                <div class="flex flex-wrap gap-2 mt-1">
+                                    ${q.allowMultiple 
+                                        ? `<span class="inline-flex items-center text-xs font-medium text-purple-600 bg-purple-50 px-2 py-1 rounded border border-purple-100"><i data-lucide="check-square" class="w-3 h-3 mr-1"></i> 多選題</span>` 
+                                        : `<span class="inline-flex items-center text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-100"><i data-lucide="circle-dot" class="w-3 h-3 mr-1"></i> 單選題</span>`}
+                                    ${q.allowOther ? `<span class="inline-flex items-center text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-1 rounded border border-indigo-100"><i data-lucide="pen-line" class="w-3 h-3 mr-1"></i> 包含「其他」</span>` : ''}
+                                </div>
                             </div>
                             <div class="flex flex-col gap-2 ml-4 flex-shrink-0">
                                 <button onclick="window.togglePublish('${q.id}')" class="flex items-center justify-center px-4 py-2 rounded-lg font-medium transition-colors ${isActive ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}">
@@ -519,11 +540,15 @@
             if (!activeQ) return;
 
             const activeAnswers = state.answersData.filter(a => a.questionId === activeId);
-            const totalVotes = activeAnswers.length;
+            const totalRespondents = activeAnswers.length; // 以人頭為基準計算百分比
 
             let optionsHtml = activeQ.options.map((opt, idx) => {
-                const votes = activeAnswers.filter(a => a.optionIndex === idx).length;
-                const percentage = totalVotes === 0 ? 0 : Math.round((votes / totalVotes) * 100);
+                // 相容單選與多選的資料結構
+                const votes = activeAnswers.filter(a => 
+                    a.optionIndex === idx || (a.selectedOptions && a.selectedOptions.includes(idx))
+                ).length;
+                const percentage = totalRespondents === 0 ? 0 : Math.round((votes / totalRespondents) * 100);
+                
                 return `
                     <div class="relative">
                         <div class="flex justify-between items-end mb-2 px-1">
@@ -539,11 +564,12 @@
 
             // 處理「其他」選項的結果展示
             if (activeQ.allowOther) {
-                const otherAnswers = activeAnswers.filter(a => a.optionIndex === 'other');
+                const otherAnswers = activeAnswers.filter(a => 
+                    a.optionIndex === 'other' || (a.selectedOptions && a.selectedOptions.includes('other'))
+                );
                 const votes = otherAnswers.length;
-                const percentage = totalVotes === 0 ? 0 : Math.round((votes / totalVotes) * 100);
+                const percentage = totalRespondents === 0 ? 0 : Math.round((votes / totalRespondents) * 100);
                 
-                // 長條圖部分
                 optionsHtml += `
                     <div class="relative mt-6 pt-6 border-t border-gray-100">
                         <div class="flex justify-between items-end mb-2 px-1">
@@ -556,7 +582,6 @@
                     </div>
                 `;
 
-                // 列出填寫內容
                 if (votes > 0) {
                     const textTags = otherAnswers
                         .filter(a => a.otherText && a.otherText.trim() !== '')
@@ -580,9 +605,10 @@
                 <div class="w-full max-w-4xl mx-auto animate-fade-in">
                     <div class="text-center mb-12">
                         <h2 class="text-4xl md:text-5xl font-bold text-gray-800 leading-tight mb-4">${escapeHtml(activeQ.text)}</h2>
-                        <div class="inline-flex items-center bg-gray-100 px-4 py-2 rounded-full text-gray-600 font-medium">
-                            <i data-lucide="users" class="w-4 h-4 mr-2"></i> 目前作答人數：${totalVotes} 人
+                        <div class="inline-flex items-center bg-gray-100 px-4 py-2 rounded-full text-gray-600 font-medium mr-2">
+                            <i data-lucide="users" class="w-4 h-4 mr-2"></i> 目前作答人數：${totalRespondents} 人
                         </div>
+                        ${activeQ.allowMultiple ? `<span class="inline-flex items-center text-sm font-medium text-purple-600 bg-purple-50 px-3 py-1 rounded-full border border-purple-100">此題可多選</span>` : ''}
                     </div>
                     <div class="space-y-6">
                         ${optionsHtml}
@@ -646,10 +672,21 @@
         // ==========================================
         // 參與者端功能 (Participant)
         // ==========================================
+        
         const renderParticipantArea = () => {
             const activeId = state.sessionData.activeQuestionId;
             const activeQ = activeId ? (state.sessionData.questions || []).find(q => q.id === activeId) : null;
-            
+            const hasAnswered = activeId && state.user ? state.answersData.some(a => a.questionId === activeId && a.userId === state.user.uid) : false;
+
+            // 防止背景數據更新覆蓋掉參與者正在填寫/勾選的畫面
+            if (state.lastRenderedQid === activeId && state.lastRenderedAnswerState === hasAnswered) {
+                return;
+            }
+            state.lastRenderedQid = activeId;
+            state.lastRenderedAnswerState = hasAnswered;
+            state.selectedOptions = [];
+            state.otherText = '';
+
             if (!activeQ) {
                 els.participantContent.innerHTML = `
                     <div class="text-center py-10 animate-fade-in">
@@ -665,8 +702,6 @@
                 return;
             }
 
-            const hasAnswered = state.answersData.some(a => a.questionId === activeId && a.userId === state.user.uid);
-
             if (hasAnswered) {
                 els.participantContent.innerHTML = `
                     <div class="text-center py-10 animate-fade-in">
@@ -677,50 +712,143 @@
                 return;
             }
 
-            let optionsHtml = activeQ.options.map((opt, idx) => `
-                <button onclick="window.submitAnswer(${idx}, '${activeId}')" ${state.isSubmitting ? 'disabled' : ''} class="w-full p-4 text-left text-lg font-medium text-gray-700 bg-white border-2 border-gray-100 hover:border-indigo-500 hover:bg-indigo-50 rounded-2xl transition-all shadow-sm active:scale-[0.98] disabled:opacity-50 flex items-center">
-                    <span class="inline-block w-8 h-8 bg-indigo-100 text-indigo-700 text-center leading-8 rounded-full mr-3 text-sm flex-shrink-0">
-                        ${String.fromCharCode(65 + idx)}
-                    </span>
-                    <span>${escapeHtml(opt)}</span>
-                </button>
-            `).join('');
+            // 多選題介面
+            if (activeQ.allowMultiple) {
+                let optionsHtml = activeQ.options.map((opt, idx) => `
+                    <button id="opt-btn-${idx}" onclick="window.toggleMultiOption('${idx}')" class="w-full p-4 text-left text-lg font-medium text-gray-700 bg-white border-2 border-gray-100 hover:border-indigo-500 rounded-2xl transition-all shadow-sm flex items-center">
+                        <div class="w-6 h-6 mr-3 rounded border-2 border-gray-300 flex items-center justify-center transition-colors" id="opt-check-${idx}">
+                            <i data-lucide="check" class="w-4 h-4 text-white opacity-0 transition-opacity" id="opt-icon-${idx}"></i>
+                        </div>
+                        <span>${escapeHtml(opt)}</span>
+                    </button>
+                `).join('');
 
-            // 若允許其他，則加入輸入框
-            if (activeQ.allowOther) {
-                optionsHtml += `
-                    <div class="mt-4 p-4 border-2 border-gray-100 rounded-2xl bg-gray-50 focus-within:border-indigo-500 focus-within:bg-indigo-50 transition-all">
-                        <div class="flex items-center mb-3">
-                            <span class="inline-block w-8 h-8 bg-gray-200 text-gray-700 text-center leading-8 rounded-full mr-3 text-sm flex-shrink-0">*</span>
-                            <span class="font-medium text-gray-700">其他 (請說明)</span>
+                if (activeQ.allowOther) {
+                    optionsHtml += `
+                        <div id="opt-btn-other" class="mt-4 p-4 border-2 border-gray-100 rounded-2xl bg-white hover:border-indigo-500 transition-all">
+                            <div class="flex items-center mb-3 cursor-pointer" onclick="window.toggleMultiOption('other')">
+                                <div class="w-6 h-6 mr-3 rounded border-2 border-gray-300 flex items-center justify-center transition-colors" id="opt-check-other">
+                                    <i data-lucide="check" class="w-4 h-4 text-white opacity-0 transition-opacity" id="opt-icon-other"></i>
+                                </div>
+                                <span class="font-medium text-gray-700">其他 (請說明)</span>
+                            </div>
+                            <div class="flex gap-2">
+                                <input type="text" id="other-input" oninput="window.updateOtherText(this.value)" placeholder="請輸入您的答案..." class="flex-1 p-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" ${state.isSubmitting ? 'disabled' : ''}>
+                            </div>
                         </div>
-                        <div class="flex gap-2">
-                            <input type="text" id="other-input" placeholder="請輸入您的答案..." class="flex-1 p-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" ${state.isSubmitting ? 'disabled' : ''}>
-                            <button onclick="window.submitOtherAnswer('${activeId}')" class="px-5 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50" ${state.isSubmitting ? 'disabled' : ''}>送出</button>
+                    `;
+                }
+
+                els.participantContent.innerHTML = `
+                    <div class="animate-fade-in">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-2 leading-snug">${escapeHtml(activeQ.text)}</h2>
+                        <p class="text-sm font-medium text-purple-600 mb-6 bg-purple-50 inline-block px-3 py-1 rounded-full border border-purple-100">本題為多選題</p>
+                        <div class="space-y-4">
+                            ${optionsHtml}
                         </div>
-                    </div>
-                `;
+                        <button onclick="window.submitMultiAnswer('${activeId}')" class="w-full mt-6 py-4 bg-indigo-600 text-white text-lg font-bold rounded-2xl hover:bg-indigo-700 transition-colors shadow-lg active:scale-[0.98] ${state.isSubmitting ? 'opacity-50' : ''}" ${state.isSubmitting ? 'disabled' : ''}>
+                            送出答案
+                        </button>
+                    </div>`;
+            } 
+            // 單選題介面
+            else {
+                let optionsHtml = activeQ.options.map((opt, idx) => `
+                    <button onclick="window.submitSingleAnswer(${idx}, '${activeId}')" ${state.isSubmitting ? 'disabled' : ''} class="w-full p-4 text-left text-lg font-medium text-gray-700 bg-white border-2 border-gray-100 hover:border-indigo-500 hover:bg-indigo-50 rounded-2xl transition-all shadow-sm active:scale-[0.98] disabled:opacity-50 flex items-center">
+                        <span class="inline-block w-8 h-8 bg-indigo-100 text-indigo-700 text-center leading-8 rounded-full mr-3 text-sm flex-shrink-0">
+                            ${String.fromCharCode(65 + idx)}
+                        </span>
+                        <span>${escapeHtml(opt)}</span>
+                    </button>
+                `).join('');
+
+                if (activeQ.allowOther) {
+                    optionsHtml += `
+                        <div class="mt-4 p-4 border-2 border-gray-100 rounded-2xl bg-gray-50 focus-within:border-indigo-500 focus-within:bg-indigo-50 transition-all">
+                            <div class="flex items-center mb-3">
+                                <span class="inline-block w-8 h-8 bg-gray-200 text-gray-700 text-center leading-8 rounded-full mr-3 text-sm flex-shrink-0">*</span>
+                                <span class="font-medium text-gray-700">其他 (請說明)</span>
+                            </div>
+                            <div class="flex gap-2">
+                                <input type="text" id="other-input" placeholder="請輸入您的答案..." class="flex-1 p-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" ${state.isSubmitting ? 'disabled' : ''}>
+                                <button onclick="window.submitSingleOtherAnswer('${activeId}')" class="px-5 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50" ${state.isSubmitting ? 'disabled' : ''}>送出</button>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                els.participantContent.innerHTML = `
+                    <div class="animate-fade-in">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-8 leading-snug">${escapeHtml(activeQ.text)}</h2>
+                        <div class="space-y-4">
+                            ${optionsHtml}
+                        </div>
+                    </div>`;
             }
-
-            els.participantContent.innerHTML = `
-                <div class="animate-fade-in">
-                    <h2 class="text-2xl font-bold text-gray-800 mb-8 leading-snug">${escapeHtml(activeQ.text)}</h2>
-                    <div class="space-y-4">
-                        ${optionsHtml}
-                    </div>
-                </div>`;
         };
 
-        window.submitAnswer = async (optionIndex, questionId) => {
+        // 多選切換選項 UI 更新
+        window.toggleMultiOption = (value) => {
+            // value 可能為數字 idx 或字串 'other'
+            const parsedVal = value === 'other' ? 'other' : parseInt(value);
+            const pos = state.selectedOptions.indexOf(parsedVal);
+            
+            const btn = document.getElementById(`opt-btn-${value}`);
+            const check = document.getElementById(`opt-check-${value}`);
+            const icon = document.getElementById(`opt-icon-${value}`);
+
+            if (pos > -1) {
+                // 取消選擇
+                state.selectedOptions.splice(pos, 1);
+                btn.classList.remove('border-indigo-500', 'bg-indigo-50', 'ring-2', 'ring-indigo-500');
+                btn.classList.add('border-gray-100', 'bg-white');
+                check.classList.remove('bg-indigo-600', 'border-indigo-600');
+                check.classList.add('border-gray-300');
+                if(icon) icon.classList.add('opacity-0');
+            } else {
+                // 加入選擇
+                state.selectedOptions.push(parsedVal);
+                btn.classList.remove('border-gray-100', 'bg-white');
+                btn.classList.add('border-indigo-500', 'bg-indigo-50', 'ring-2', 'ring-indigo-500');
+                check.classList.remove('border-gray-300');
+                check.classList.add('bg-indigo-600', 'border-indigo-600');
+                if(icon) icon.classList.remove('opacity-0');
+            }
+        };
+
+        // 同步輸入框內容並自動勾選「其他」
+        window.updateOtherText = (val) => {
+            state.otherText = val;
+            const hasOther = state.selectedOptions.includes('other');
+            if (val.trim() !== '' && !hasOther) {
+                window.toggleMultiOption('other');
+            } else if (val.trim() === '' && hasOther) {
+                window.toggleMultiOption('other');
+            }
+        };
+
+        // 送出多選結果
+        window.submitMultiAnswer = async (questionId) => {
+            if (state.selectedOptions.length === 0) {
+                window.showToast("請至少選擇一個選項", "error");
+                return;
+            }
+            if (state.selectedOptions.includes('other') && !state.otherText.trim()) {
+                window.showToast("請輸入「其他」的答案內容", "error");
+                const inputEl = document.getElementById('other-input');
+                if (inputEl) inputEl.focus();
+                return;
+            }
+
             if (state.isSubmitting || !state.user) return;
             state.isSubmitting = true;
-            renderParticipantArea(); // 更新 UI 禁用按鈕
             
             try {
                 const answersRef = collection(db, 'artifacts', appId, 'public', 'data', 'answers');
                 await addDoc(answersRef, {
                     questionId: questionId,
-                    optionIndex: optionIndex,
+                    selectedOptions: state.selectedOptions,
+                    otherText: state.otherText,
                     userId: state.user.uid,
                     timestamp: new Date().toISOString()
                 });
@@ -732,7 +860,30 @@
             }
         };
 
-        window.submitOtherAnswer = async (questionId) => {
+        // 單選送出 (既有選項)
+        window.submitSingleAnswer = async (optionIndex, questionId) => {
+            if (state.isSubmitting || !state.user) return;
+            state.isSubmitting = true;
+            
+            try {
+                const answersRef = collection(db, 'artifacts', appId, 'public', 'data', 'answers');
+                await addDoc(answersRef, {
+                    questionId: questionId,
+                    optionIndex: optionIndex,
+                    selectedOptions: [optionIndex], // 統一記錄格式方便擴充
+                    userId: state.user.uid,
+                    timestamp: new Date().toISOString()
+                });
+                window.showToast("送出成功！");
+            } catch (error) {
+                window.showToast("送出失敗，請重試", "error");
+            } finally {
+                state.isSubmitting = false;
+            }
+        };
+
+        // 單選送出 (其他)
+        window.submitSingleOtherAnswer = async (questionId) => {
             const inputEl = document.getElementById('other-input');
             const text = inputEl ? inputEl.value.trim() : '';
             
@@ -744,14 +895,14 @@
             
             if (state.isSubmitting || !state.user) return;
             state.isSubmitting = true;
-            renderParticipantArea(); // 更新 UI 禁用按鈕
             
             try {
                 const answersRef = collection(db, 'artifacts', appId, 'public', 'data', 'answers');
                 await addDoc(answersRef, {
                     questionId: questionId,
-                    optionIndex: 'other', // 以字串 'other' 代表非標準選項
-                    otherText: text,      // 記錄使用者輸入文字
+                    optionIndex: 'other', 
+                    selectedOptions: ['other'],
+                    otherText: text,
                     userId: state.user.uid,
                     timestamp: new Date().toISOString()
                 });
