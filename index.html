@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>即時互動問卷系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.5s ease-out forwards;
+        }
+        .bar-transition {
+            transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        /* 隱藏捲軸但保留功能 */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="min-h-screen bg-slate-100 text-slate-800 font-sans">
+
+    <!-- 全域提示訊息 Toast -->
+    <div id="toast-container" class="fixed top-5 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-lg z-50 text-white transition-all duration-300 opacity-0 pointer-events-none" style="top: -50px;">
+        <span id="toast-message"></span>
+    </div>
+
+    <!-- 載入中畫面 -->
+    <div id="loading-screen" class="flex items-center justify-center min-h-screen bg-gray-50 absolute inset-0 z-40">
+        <div class="text-xl font-semibold text-gray-600 animate-pulse">系統載入中...</div>
+    </div>
+
+    <!-- 應用程式容器 -->
+    <div id="app-container" class="hidden min-h-screen">
+        <!-- 後台介面 -->
+        <div id="admin-view" class="hidden max-w-6xl mx-auto p-4 md:p-8">
+            <!-- 頂部導航 -->
+            <div class="flex flex-col md:flex-row justify-between items-center bg-white p-6 rounded-2xl shadow-sm mb-8 gap-4">
+                <div class="flex items-center gap-3">
+                    <div class="bg-indigo-600 p-3 rounded-xl text-white">
+                        <i data-lucide="bar-chart-3" class="w-7 h-7"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-2xl font-bold text-gray-800">即時問卷互動後台</h1>
+                        <p class="text-gray-500 text-sm">建立題目並與觀眾即時互動</p>
+                    </div>
+                </div>
+                
+                <div class="flex bg-gray-100 p-1 rounded-lg">
+                    <button onclick="window.switchTab('manage')" id="tab-manage" class="px-6 py-2 rounded-md font-medium transition-colors bg-white text-indigo-600 shadow-sm">
+                        <i data-lucide="settings" class="inline w-4 h-4 mr-2 mb-1"></i>題目管理
+                    </button>
+                    <button onclick="window.switchTab('present')" id="tab-present" class="px-6 py-2 rounded-md font-medium transition-colors text-gray-500 hover:text-gray-700">
+                        <i data-lucide="play" class="inline w-4 h-4 mr-2 mb-1"></i>即時呈現
+                    </button>
+                </div>
+            </div>
+
+            <!-- 題目管理分頁 -->
+            <div id="tab-content-manage" class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <!-- 左側：建立題目 -->
+                <div class="lg:col-span-1 space-y-6">
+                    <div class="bg-white p-6 rounded-2xl shadow-sm">
+                        <h2 class="text-lg font-bold mb-4 flex items-center">
+                            <i data-lucide="plus" class="mr-2 text-indigo-600 w-5 h-5"></i> 新增題目
+                        </h2>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">題目內容</label>
+                                <textarea id="new-question-text" class="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-none transition-all" rows="3" placeholder="請輸入你的問題..."></textarea>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">選項設定</label>
+                                <div id="options-container">
+                                    <!-- 選項輸入框由 JS 動態生成 -->
+                                </div>
+                                <button onclick="window.addOption()" class="text-sm text-indigo-600 font-medium hover:text-indigo-800 mt-1 flex items-center">
+                                    <i data-lucide="plus" class="mr-1 w-4 h-4"></i> 加入更多選項
+                                </button>
+                            </div>
+
+                            <button onclick="window.handleAddQuestion()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 rounded-xl transition-colors shadow-md hover:shadow-lg">
+                                儲存並新增題目
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 資料匯入匯出 -->
+                    <div class="bg-white p-6 rounded-2xl shadow-sm">
+                        <h2 class="text-lg font-bold mb-4">資料管理</h2>
+                        <div class="flex gap-3">
+                            <button onclick="window.handleExport()" class="flex-1 flex items-center justify-center gap-2 bg-gray-50 border border-gray-200 hover:bg-gray-100 text-gray-700 py-2 rounded-xl transition-colors">
+                                <i data-lucide="download" class="w-4 h-4"></i> 匯出
+                            </button>
+                            
+                            <input type="file" accept=".json" id="import-file" onchange="window.handleImport(event)" class="hidden" />
+                            <button onclick="document.getElementById('import-file').click()" class="flex-1 flex items-center justify-center gap-2 bg-gray-50 border border-gray-200 hover:bg-gray-100 text-gray-700 py-2 rounded-xl transition-colors">
+                                <i data-lucide="upload" class="w-4 h-4"></i> 匯入
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右側：題目列表 -->
+                <div class="lg:col-span-2">
+                    <div class="bg-white p-6 rounded-2xl shadow-sm h-full">
+                        <h2 class="text-lg font-bold mb-4">題目列表庫</h2>
+                        <div id="questions-list" class="space-y-4">
+                            <!-- 題目列表由 JS 動態生成 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 即時呈現分頁 -->
+            <div id="tab-content-present" class="hidden grid grid-cols-1 lg:grid-cols-4 gap-8">
+                <!-- 大螢幕呈現區 -->
+                <div class="lg:col-span-3 bg-white p-8 md:p-12 rounded-3xl shadow-sm min-h-[600px] flex flex-col justify-center relative overflow-hidden">
+                    <div class="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500"></div>
+                    <div id="presentation-area" class="w-full">
+                        <!-- 圖表由 JS 動態生成 -->
+                    </div>
+                </div>
+
+                <!-- QR Code 側邊欄 -->
+                <div class="lg:col-span-1 space-y-6">
+                    <div class="bg-white p-6 rounded-2xl shadow-sm text-center">
+                        <h3 class="text-lg font-bold text-gray-800 mb-4 flex items-center justify-center gap-2">
+                            <i data-lucide="smartphone" class="text-indigo-600 w-5 h-5"></i> 掃碼參與互動
+                        </h3>
+                        <div class="bg-white p-2 border-2 border-dashed border-gray-200 rounded-xl inline-block mb-4">
+                            <img id="qr-code-img" src="" alt="QR Code" class="w-48 h-48 object-contain" />
+                        </div>
+                        <p class="text-sm text-gray-500 mb-4">請參與者掃描上方 QR Code</p>
+                        
+                        <button onclick="window.copyParticipantUrl()" class="w-full flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 py-2 rounded-lg font-medium hover:bg-indigo-100 transition-colors">
+                            <i data-lucide="copy" class="w-4 h-4"></i> 複製參與網址
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 參與者介面 -->
+        <div id="participant-view" class="hidden min-h-screen bg-indigo-50 flex flex-col items-center p-4">
+            <div class="w-full max-w-md bg-white rounded-3xl shadow-xl overflow-hidden mt-10">
+                <div class="bg-indigo-600 p-6 text-center text-white relative">
+                    <h1 class="text-xl font-bold tracking-wide">即時互動問卷</h1>
+                    <div class="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-white opacity-10 rounded-full blur-xl"></div>
+                    <div class="absolute bottom-0 left-0 -mb-4 -ml-4 w-16 h-16 bg-white opacity-10 rounded-full blur-lg"></div>
+                </div>
+                <div id="participant-content" class="p-8">
+                    <!-- 參與者內容由 JS 動態生成 -->
+                </div>
+            </div>
+            <p class="mt-8 text-gray-400 text-sm">Powered by 即時互動系統</p>
+        </div>
+    </div>
+
+    <!-- 應用程式邏輯 (ES Modules) -->
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+        import { getFirestore, collection, doc, setDoc, onSnapshot, addDoc, getDocs } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+
+        // ==========================================
+        // 全域狀態與變數
+        // ==========================================
+		// Your web app's Firebase configuration
+		// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+		const firebaseConfig = {
+			apiKey: "AIzaSyA2yYtQ54ndvkWUN-umbMGsIHR4iUfsvH4",
+			authDomain: "wzuiitc.firebaseapp.com",
+			projectId: "wzuiitc",
+			storageBucket: "wzuiitc.firebasestorage.app",
+			messagingSenderId: "273964264280",
+			appId: "1:273964264280:web:a04fc0ebd007b973f0932d",
+			measurementId: "G-LHNPL9JDDY"
+		};
+		// 你可以自訂一個字串作為這個問卷系統的專屬資料夾名稱
+		const appId = 'my-survey-system-v1';
+
+        
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        const state = {
+            user: null,
+            role: 'admin',
+            sessionData: { questions: [], activeQuestionId: null },
+            answersData: [],
+            newQuestionOptions: ["", ""],
+            isSubmitting: false,
+            activeTab: 'manage'
+        };
+
+        // DOM 元素快取
+        const els = {
+            loading: document.getElementById('loading-screen'),
+            appContainer: document.getElementById('app-container'),
+            adminView: document.getElementById('admin-view'),
+            participantView: document.getElementById('participant-view'),
+            toast: document.getElementById('toast-container'),
+            toastMsg: document.getElementById('toast-message'),
+            optionsContainer: document.getElementById('options-container'),
+            questionsList: document.getElementById('questions-list'),
+            presentationArea: document.getElementById('presentation-area'),
+            participantContent: document.getElementById('participant-content'),
+            qrCodeImg: document.getElementById('qr-code-img')
+        };
+
+        // ==========================================
+        // 初始化與輔助功能
+        // ==========================================
+        window.showToast = (message, type = 'success') => {
+            els.toastMsg.textContent = message;
+            els.toast.className = `fixed top-5 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-full shadow-lg z-50 text-white transition-all duration-300 ${type === 'error' ? 'bg-red-500' : 'bg-emerald-500'}`;
+            els.toast.style.top = '20px';
+            els.toast.style.opacity = '1';
+            
+            if(window.toastTimer) clearTimeout(window.toastTimer);
+            window.toastTimer = setTimeout(() => {
+                els.toast.style.top = '-50px';
+                els.toast.style.opacity = '0';
+            }, 3000);
+        };
+
+        const initApp = () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            state.role = urlParams.get('role') === 'participant' ? 'participant' : 'admin';
+            
+            if (state.role === 'admin') {
+                const participantUrl = window.location.href.split('?')[0] + '?role=participant';
+                els.qrCodeImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(participantUrl)}`;
+                els.adminView.classList.remove('hidden');
+                renderOptionsInputs();
+            } else {
+                els.participantView.classList.remove('hidden');
+            }
+            
+            lucide.createIcons();
+            authSetup();
+        };
+
+        const authSetup = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Auth Error:", error);
+                window.showToast("登入失敗，請重新載入", "error");
+            }
+
+            onAuthStateChanged(auth, (user) => {
+                state.user = user;
+                if (user) {
+                    setupListeners();
+                    els.loading.classList.add('hidden');
+                    els.appContainer.classList.remove('hidden');
+                }
+            });
+        };
+
+        const setupListeners = () => {
+            if (!state.user) return;
+
+            // Session Listener
+            const sessionRef = doc(db, 'artifacts', appId, 'public', 'data', 'sessions', 'default');
+            onSnapshot(sessionRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    state.sessionData = docSnap.data();
+                } else {
+                    setDoc(sessionRef, { questions: [], activeQuestionId: null }, { merge: true });
+                }
+                updateUI();
+            });
+
+            // Answers Listener
+            const answersRef = collection(db, 'artifacts', appId, 'public', 'data', 'answers');
+            onSnapshot(answersRef, (snapshot) => {
+                const currentAnswers = [];
+                snapshot.forEach(doc => currentAnswers.push({ id: doc.id, ...doc.data() }));
+                state.answersData = currentAnswers;
+                updateUI();
+            });
+        };
+
+        const updateUI = () => {
+            if (state.role === 'admin') {
+                renderQuestionsList();
+                renderPresentationArea();
+            } else {
+                renderParticipantArea();
+            }
+            lucide.createIcons();
+        };
+
+        // ==========================================
+        // 後台管理功能 (Admin)
+        // ==========================================
+        window.switchTab = (tabName) => {
+            state.activeTab = tabName;
+            
+            document.getElementById('tab-manage').className = `px-6 py-2 rounded-md font-medium transition-colors ${tabName === 'manage' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`;
+            document.getElementById('tab-present').className = `px-6 py-2 rounded-md font-medium transition-colors ${tabName === 'present' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`;
+            
+            document.getElementById('tab-content-manage').style.display = tabName === 'manage' ? 'grid' : 'none';
+            document.getElementById('tab-content-present').style.display = tabName === 'present' ? 'grid' : 'none';
+        };
+
+        const renderOptionsInputs = () => {
+            els.optionsContainer.innerHTML = state.newQuestionOptions.map((opt, idx) => `
+                <div class="flex gap-2 mb-2">
+                    <input type="text" class="flex-1 p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none transition-all" 
+                           placeholder="選項 ${idx + 1}" value="${opt}" oninput="window.updateOptionVal(${idx}, this.value)">
+                    ${state.newQuestionOptions.length > 2 ? `
+                        <button onclick="window.removeOption(${idx})" class="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
+                    ` : ''}
+                </div>
+            `).join('');
+            lucide.createIcons();
+        };
+
+        window.updateOptionVal = (idx, val) => { state.newQuestionOptions[idx] = val; };
+        window.addOption = () => { state.newQuestionOptions.push(""); renderOptionsInputs(); };
+        window.removeOption = (idx) => { state.newQuestionOptions.splice(idx, 1); renderOptionsInputs(); };
+
+        window.handleAddQuestion = async () => {
+            const textInput = document.getElementById('new-question-text');
+            const text = textInput.value.trim();
+            const validOptions = state.newQuestionOptions.filter(opt => opt.trim() !== "");
+
+            if (!text || validOptions.length < 2) {
+                window.showToast("請填寫完整題目，並至少提供兩個選項", "error");
+                return;
+            }
+
+            const newQ = { id: `q_${Date.now()}`, text, options: validOptions };
+            const updatedQuestions = [...(state.sessionData.questions || []), newQ];
+            
+            try {
+                const sessionRef = doc(db, 'artifacts', appId, 'public', 'data', 'sessions', 'default');
+                await setDoc(sessionRef, { questions: updatedQuestions }, { merge: true });
+                
+                textInput.value = "";
+                state.newQuestionOptions = ["", ""];
+                renderOptionsInputs();
+                window.showToast("題目已新增");
+            } catch (err) {
+                window.showToast("新增失敗", "error");
+            }
+        };
+
+        window.handleDeleteQuestion = async (id) => {
+            const updatedQuestions = state.sessionData.questions.filter(q => q.id !== id);
+            const updateData = { questions: updatedQuestions };
+            if (state.sessionData.activeQuestionId === id) updateData.activeQuestionId = null;
+            
+            try {
+                const sessionRef = doc(db, 'artifacts', appId, 'public', 'data', 'sessions', 'default');
+                await setDoc(sessionRef, updateData, { merge: true });
+                window.showToast("題目已刪除");
+            } catch (err) {
+                window.showToast("刪除失敗", "error");
+            }
+        };
+
+        window.togglePublish = async (id) => {
+            const updateData = {};
+            let msg = "";
+            if (state.sessionData.activeQuestionId === id) {
+                updateData.activeQuestionId = null;
+                msg = "已停止發布";
+            } else {
+                updateData.activeQuestionId = id;
+                msg = "題目已即時發布！";
+            }
+            
+            try {
+                const sessionRef = doc(db, 'artifacts', appId, 'public', 'data', 'sessions', 'default');
+                await setDoc(sessionRef, updateData, { merge: true });
+                window.showToast(msg);
+                if (updateData.activeQuestionId) window.switchTab('present');
+            } catch (err) {
+                window.showToast("狀態更新失敗", "error");
+            }
+        };
+
+        const renderQuestionsList = () => {
+            const questions = state.sessionData.questions || [];
+            if (questions.length === 0) {
+                els.questionsList.innerHTML = `
+                    <div class="text-center py-12 text-gray-400">
+                        <i data-lucide="bar-chart-3" class="w-12 h-12 mx-auto mb-3 opacity-20"></i>
+                        <p>目前還沒有任何題目，請由左側新增。</p>
+                    </div>`;
+                return;
+            }
+
+            els.questionsList.innerHTML = questions.map((q, index) => {
+                const isActive = state.sessionData.activeQuestionId === q.id;
+                return `
+                    <div class="p-5 rounded-xl border-2 transition-all ${isActive ? 'border-emerald-500 bg-emerald-50 shadow-md' : 'border-gray-100 bg-gray-50 hover:border-indigo-200'}">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <span class="inline-block bg-gray-200 text-gray-700 text-xs px-2 py-1 rounded mb-2 font-bold tracking-wider">Q${index + 1}</span>
+                                <h3 class="text-lg font-semibold text-gray-800 mb-2">${escapeHtml(q.text)}</h3>
+                                <div class="flex flex-wrap gap-2">
+                                    ${q.options.map(opt => `<span class="bg-white border border-gray-200 text-sm px-3 py-1 rounded-full text-gray-600">${escapeHtml(opt)}</span>`).join('')}
+                                </div>
+                            </div>
+                            <div class="flex flex-col gap-2 ml-4 flex-shrink-0">
+                                <button onclick="window.togglePublish('${q.id}')" class="flex items-center justify-center px-4 py-2 rounded-lg font-medium transition-colors ${isActive ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}">
+                                    <i data-lucide="${isActive ? 'square' : 'play'}" class="w-4 h-4 mr-2"></i> ${isActive ? '停止發布' : '發布此題'}
+                                </button>
+                                <button onclick="window.handleDeleteQuestion('${q.id}')" class="px-4 py-2 text-sm text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                                    刪除題目
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        };
+
+        const renderPresentationArea = () => {
+            const activeId = state.sessionData.activeQuestionId;
+            if (!activeId) {
+                els.presentationArea.innerHTML = `
+                    <div class="text-center">
+                        <div class="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                            <i data-lucide="play" class="w-10 h-10 text-gray-300 ml-1"></i>
+                        </div>
+                        <h2 class="text-3xl font-bold text-gray-400 mb-2">等待發布題目...</h2>
+                        <p class="text-gray-400">請至「題目管理」選擇一題並發布</p>
+                    </div>`;
+                return;
+            }
+
+            const activeQ = (state.sessionData.questions || []).find(q => q.id === activeId);
+            if (!activeQ) return;
+
+            const activeAnswers = state.answersData.filter(a => a.questionId === activeId);
+            const totalVotes = activeAnswers.length;
+
+            let optionsHtml = activeQ.options.map((opt, idx) => {
+                const votes = activeAnswers.filter(a => a.optionIndex === idx).length;
+                const percentage = totalVotes === 0 ? 0 : Math.round((votes / totalVotes) * 100);
+                return `
+                    <div class="relative">
+                        <div class="flex justify-between items-end mb-2 px-1">
+                            <span class="text-xl font-semibold text-gray-700">${escapeHtml(opt)}</span>
+                            <span class="text-xl font-bold text-indigo-600">${percentage}% <span class="text-sm text-gray-400 font-normal ml-1">(${votes})</span></span>
+                        </div>
+                        <div class="w-full bg-gray-100 rounded-full h-8 overflow-hidden relative">
+                            <div class="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full bar-transition" style="width: ${percentage}%;"></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            els.presentationArea.innerHTML = `
+                <div class="w-full max-w-4xl mx-auto animate-fade-in">
+                    <div class="text-center mb-12">
+                        <h2 class="text-4xl md:text-5xl font-bold text-gray-800 leading-tight mb-4">${escapeHtml(activeQ.text)}</h2>
+                        <div class="inline-flex items-center bg-gray-100 px-4 py-2 rounded-full text-gray-600 font-medium">
+                            <i data-lucide="users" class="w-4 h-4 mr-2"></i> 目前作答人數：${totalVotes} 人
+                        </div>
+                    </div>
+                    <div class="space-y-6">
+                        ${optionsHtml}
+                    </div>
+                </div>
+            `;
+        };
+
+        window.handleExport = () => {
+            const exportData = {
+                questions: state.sessionData.questions || [],
+                answers: state.answersData || []
+            };
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `survey_export_${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            window.showToast("資料已匯出");
+        };
+
+        window.handleImport = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                try {
+                    const imported = JSON.parse(event.target.result);
+                    if (imported.questions && Array.isArray(imported.questions)) {
+                        const sessionRef = doc(db, 'artifacts', appId, 'public', 'data', 'sessions', 'default');
+                        await setDoc(sessionRef, { questions: imported.questions, activeQuestionId: null }, { merge: true });
+                        window.showToast("問卷題目匯入成功！");
+                    } else {
+                        window.showToast("無效的檔案格式", "error");
+                    }
+                } catch (err) {
+                    window.showToast("匯入解析失敗", "error");
+                }
+            };
+            reader.readAsText(file);
+            document.getElementById('import-file').value = '';
+        };
+
+        window.copyParticipantUrl = () => {
+            const participantUrl = window.location.href.split('?')[0] + '?role=participant';
+            try {
+                const textArea = document.createElement("textarea");
+                textArea.value = participantUrl;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                window.showToast("網址已複製");
+            } catch (err) {
+                window.showToast("複製失敗", "error");
+            }
+        };
+
+        // ==========================================
+        // 參與者端功能 (Participant)
+        // ==========================================
+        const renderParticipantArea = () => {
+            const activeId = state.sessionData.activeQuestionId;
+            const activeQ = activeId ? (state.sessionData.questions || []).find(q => q.id === activeId) : null;
+            
+            if (!activeQ) {
+                els.participantContent.innerHTML = `
+                    <div class="text-center py-10 animate-fade-in">
+                        <div class="relative w-20 h-20 mx-auto mb-6">
+                            <div class="absolute inset-0 bg-indigo-100 rounded-full animate-ping opacity-75"></div>
+                            <div class="relative w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center border-4 border-indigo-100">
+                                <i data-lucide="smartphone" class="w-8 h-8 text-indigo-400"></i>
+                            </div>
+                        </div>
+                        <h2 class="text-2xl font-bold text-gray-800 mb-2">請看大螢幕</h2>
+                        <p class="text-gray-500">等待主持人發布下一道題目...</p>
+                    </div>`;
+                return;
+            }
+
+            const hasAnswered = state.answersData.some(a => a.questionId === activeId && a.userId === state.user.uid);
+
+            if (hasAnswered) {
+                els.participantContent.innerHTML = `
+                    <div class="text-center py-10 animate-fade-in">
+                        <i data-lucide="check-circle-2" class="w-16 h-16 text-emerald-500 mx-auto mb-6"></i>
+                        <h2 class="text-2xl font-bold text-gray-800 mb-2">已成功送出</h2>
+                        <p class="text-gray-500">請等待主持人公布結果，或發布下一題。</p>
+                    </div>`;
+                return;
+            }
+
+            const optionsHtml = activeQ.options.map((opt, idx) => `
+                <button onclick="window.submitAnswer(${idx}, '${activeId}')" ${state.isSubmitting ? 'disabled' : ''} class="w-full p-4 text-left text-lg font-medium text-gray-700 bg-white border-2 border-gray-100 hover:border-indigo-500 hover:bg-indigo-50 rounded-2xl transition-all shadow-sm active:scale-[0.98] disabled:opacity-50 flex items-center">
+                    <span class="inline-block w-8 h-8 bg-indigo-100 text-indigo-700 text-center leading-8 rounded-full mr-3 text-sm flex-shrink-0">
+                        ${String.fromCharCode(65 + idx)}
+                    </span>
+                    <span>${escapeHtml(opt)}</span>
+                </button>
+            `).join('');
+
+            els.participantContent.innerHTML = `
+                <div class="animate-fade-in">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-8 leading-snug">${escapeHtml(activeQ.text)}</h2>
+                    <div class="space-y-4">
+                        ${optionsHtml}
+                    </div>
+                </div>`;
+        };
+
+        window.submitAnswer = async (optionIndex, questionId) => {
+            if (state.isSubmitting || !state.user) return;
+            state.isSubmitting = true;
+            renderParticipantArea(); // 更新 UI 禁用按鈕
+            
+            try {
+                const answersRef = collection(db, 'artifacts', appId, 'public', 'data', 'answers');
+                await addDoc(answersRef, {
+                    questionId: questionId,
+                    optionIndex: optionIndex,
+                    userId: state.user.uid,
+                    timestamp: new Date().toISOString()
+                });
+                window.showToast("送出成功！");
+            } catch (error) {
+                window.showToast("送出失敗，請重試", "error");
+            } finally {
+                state.isSubmitting = false;
+            }
+        };
+
+        // 安全跳脫 HTML 標籤
+        const escapeHtml = (unsafe) => {
+            return (unsafe||"").toString()
+                 .replace(/&/g, "&amp;")
+                 .replace(/</g, "&lt;")
+                 .replace(/>/g, "&gt;")
+                 .replace(/"/g, "&quot;")
+                 .replace(/'/g, "&#039;");
+        };
+
+        // 啟動程式
+        initApp();
+
+    </script>
+</body>
+</html>
