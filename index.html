@@ -99,7 +99,7 @@
                 <!-- 左側：建立題目 -->
                 <div class="lg:col-span-1 space-y-6">
                     <div class="bg-white p-6 rounded-2xl shadow-sm">
-                        <h2 class="text-lg font-bold mb-4 flex items-center">
+                        <h2 id="form-header" class="text-lg font-bold mb-4 flex items-center">
                             <i data-lucide="plus" class="mr-2 text-indigo-600 w-5 h-5"></i> 新增題目
                         </h2>
                         <div class="space-y-4">
@@ -136,9 +136,14 @@
                                 </div>
                             </div>
 
-                            <button onclick="window.handleAddQuestion()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 rounded-xl transition-colors shadow-md hover:shadow-lg mt-2">
-                                儲存並新增題目
-                            </button>
+                            <div class="flex gap-2 mt-2">
+                                <button id="cancel-edit-btn" onclick="window.cancelEdit()" class="hidden flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-3 rounded-xl transition-colors shadow-sm">
+                                    取消
+                                </button>
+                                <button id="save-question-btn" onclick="window.handleAddQuestion()" class="flex-[2] bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 rounded-xl transition-colors shadow-md hover:shadow-lg">
+                                    儲存並新增題目
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -292,6 +297,7 @@
             activeTab: 'manage',
             qrSize: 192,
             presentationScale: 100, // 圖表縮放比例 (預設 100%)
+            editingQuestionId: null, // 用於記錄當前編輯中的題目 ID
             
             // 參與者專用狀態（防止重繪干擾）
             lastRenderedQid: null,
@@ -471,6 +477,23 @@
             document.getElementById('tab-content-present').style.display = tabName === 'present' ? 'grid' : 'none';
         };
 
+        const updateFormUI = () => {
+            const formHeader = document.getElementById('form-header');
+            const cancelBtn = document.getElementById('cancel-edit-btn');
+            const saveBtn = document.getElementById('save-question-btn');
+
+            if (state.editingQuestionId) {
+                formHeader.innerHTML = `<i data-lucide="edit-3" class="mr-2 text-indigo-600 w-5 h-5"></i> 編輯題目`;
+                cancelBtn.classList.remove('hidden');
+                saveBtn.textContent = "儲存修改";
+            } else {
+                formHeader.innerHTML = `<i data-lucide="plus" class="mr-2 text-indigo-600 w-5 h-5"></i> 新增題目`;
+                cancelBtn.classList.add('hidden');
+                saveBtn.textContent = "儲存並新增題目";
+            }
+            lucide.createIcons();
+        };
+
         const renderOptionsInputs = () => {
             els.optionsContainer.innerHTML = state.newQuestionOptions.map((opt, idx) => `
                 <div class="flex gap-2 mb-2">
@@ -490,6 +513,36 @@
         window.addOption = () => { state.newQuestionOptions.push(""); renderOptionsInputs(); };
         window.removeOption = (idx) => { state.newQuestionOptions.splice(idx, 1); renderOptionsInputs(); };
 
+        window.startEditQuestion = (id) => {
+            const q = state.sessionData.questions.find(q => q.id === id);
+            if (!q) return;
+
+            state.editingQuestionId = id;
+            document.getElementById('new-question-text').value = q.text;
+            document.getElementById('allow-other-checkbox').checked = !!q.allowOther;
+            document.getElementById('allow-multiple-checkbox').checked = !!q.allowMultiple;
+            
+            state.newQuestionOptions = [...q.options];
+            // 確保選項欄位至少有兩個
+            while(state.newQuestionOptions.length < 2) state.newQuestionOptions.push("");
+            
+            renderOptionsInputs();
+            updateFormUI();
+
+            // 將畫面平滑捲動到最上方表單處
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        };
+
+        window.cancelEdit = () => {
+            state.editingQuestionId = null;
+            document.getElementById('new-question-text').value = "";
+            document.getElementById('allow-other-checkbox').checked = false;
+            document.getElementById('allow-multiple-checkbox').checked = false;
+            state.newQuestionOptions = ["", ""];
+            renderOptionsInputs();
+            updateFormUI();
+        };
+
         window.handleAddQuestion = async () => {
             const textInput = document.getElementById('new-question-text');
             const allowOtherCheckbox = document.getElementById('allow-other-checkbox');
@@ -505,22 +558,34 @@
                 return;
             }
 
-            const newQ = { id: `q_${Date.now()}`, text, options: validOptions, allowOther, allowMultiple };
-            const updatedQuestions = [...(state.sessionData.questions || []), newQ];
+            let updatedQuestions = [...(state.sessionData.questions || [])];
+
+            if (state.editingQuestionId) {
+                // 更新現有題目
+                const index = updatedQuestions.findIndex(q => q.id === state.editingQuestionId);
+                if (index !== -1) {
+                    updatedQuestions[index] = { 
+                        ...updatedQuestions[index], 
+                        text, 
+                        options: validOptions, 
+                        allowOther, 
+                        allowMultiple 
+                    };
+                }
+            } else {
+                // 新增題目
+                const newQ = { id: `q_${Date.now()}`, text, options: validOptions, allowOther, allowMultiple };
+                updatedQuestions.push(newQ);
+            }
             
             try {
                 const sessionRef = doc(db, 'artifacts', appId, 'public', 'data', 'sessions', 'default');
                 await setDoc(sessionRef, { questions: updatedQuestions }, { merge: true });
                 
-                // 重置表單
-                textInput.value = "";
-                allowOtherCheckbox.checked = false;
-                allowMultipleCheckbox.checked = false;
-                state.newQuestionOptions = ["", ""];
-                renderOptionsInputs();
-                window.showToast("題目已新增");
+                window.showToast(state.editingQuestionId ? "修改已儲存" : "題目已新增");
+                window.cancelEdit(); // 儲存完畢後重置表單並退出編輯模式
             } catch (err) {
-                window.showToast("新增失敗", "error");
+                window.showToast("儲存失敗", "error");
             }
         };
 
@@ -533,6 +598,11 @@
                 const sessionRef = doc(db, 'artifacts', appId, 'public', 'data', 'sessions', 'default');
                 await setDoc(sessionRef, updateData, { merge: true });
                 window.showToast("題目已刪除");
+                
+                // 如果刪除的是正在編輯的題目，一併清除編輯狀態
+                if (state.editingQuestionId === id) {
+                    window.cancelEdit();
+                }
             } catch (err) {
                 window.showToast("刪除失敗", "error");
             }
@@ -575,7 +645,7 @@
                 return `
                     <div class="p-5 rounded-xl border-2 transition-all ${isActive ? 'border-emerald-500 bg-emerald-50 shadow-md' : 'border-gray-100 bg-gray-50 hover:border-indigo-200'}">
                         <div class="flex justify-between items-start">
-                            <div>
+                            <div class="flex-1 pr-4">
                                 <span class="inline-block bg-gray-200 text-gray-700 text-xs px-2 py-1 rounded mb-2 font-bold tracking-wider">Q${index + 1}</span>
                                 <h3 class="text-lg font-semibold text-gray-800 mb-2">${escapeHtml(q.text)}</h3>
                                 <div class="flex flex-wrap gap-2 mb-2">
@@ -588,13 +658,18 @@
                                     ${q.allowOther ? `<span class="inline-flex items-center text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-1 rounded border border-indigo-100"><i data-lucide="pen-line" class="w-3 h-3 mr-1"></i> 包含「其他」</span>` : ''}
                                 </div>
                             </div>
-                            <div class="flex flex-col gap-2 ml-4 flex-shrink-0">
+                            <div class="flex flex-col gap-2 flex-shrink-0 min-w-[110px]">
                                 <button onclick="window.togglePublish('${q.id}')" class="flex items-center justify-center px-4 py-2 rounded-lg font-medium transition-colors ${isActive ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}">
                                     <i data-lucide="${isActive ? 'square' : 'play'}" class="w-4 h-4 mr-2"></i> ${isActive ? '停止發布' : '發布此題'}
                                 </button>
-                                <button onclick="window.handleDeleteQuestion('${q.id}')" class="px-4 py-2 text-sm text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-                                    刪除題目
-                                </button>
+                                <div class="flex gap-2">
+                                    <button onclick="window.startEditQuestion('${q.id}')" class="flex-1 py-1.5 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors border border-gray-200 hover:border-indigo-200 bg-white shadow-sm">
+                                        編輯
+                                    </button>
+                                    <button onclick="window.handleDeleteQuestion('${q.id}')" class="flex-1 py-1.5 text-sm text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-gray-200 hover:border-red-200 bg-white shadow-sm">
+                                        刪除
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
