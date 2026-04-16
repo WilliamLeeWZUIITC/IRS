@@ -150,10 +150,29 @@
             <!-- 即時呈現分頁 -->
             <div id="tab-content-present" class="hidden grid grid-cols-1 lg:grid-cols-4 gap-8">
                 <!-- 大螢幕呈現區 -->
-                <div class="lg:col-span-3 bg-white p-8 md:p-12 rounded-3xl shadow-sm min-h-[600px] flex flex-col justify-center relative overflow-hidden">
+                <div class="lg:col-span-3 bg-white p-8 md:p-12 rounded-3xl shadow-sm min-h-[600px] flex flex-col justify-center relative overflow-y-auto overflow-x-hidden no-scrollbar group">
                     <div class="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500"></div>
-                    <div id="presentation-area" class="w-full">
-                        <!-- 圖表由 JS 動態生成 -->
+                    
+                    <!-- 圖表縮放控制 -->
+                    <div class="absolute top-6 right-6 flex items-center justify-center gap-2 bg-white/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-gray-200 shadow-sm z-10 opacity-30 group-hover:opacity-100 transition-opacity">
+                        <button onclick="window.zoomPresentation(-10)" class="p-1 text-gray-500 hover:bg-gray-100 rounded-full transition-colors" title="縮小統計圖表">
+                            <i data-lucide="minus" class="w-4 h-4"></i>
+                        </button>
+                        <span id="presentation-size-label" class="text-xs font-medium text-gray-600 w-10 text-center">100%</span>
+                        <button onclick="window.zoomPresentation(10)" class="p-1 text-gray-500 hover:bg-gray-100 rounded-full transition-colors" title="放大統計圖表">
+                            <i data-lucide="plus" class="w-4 h-4"></i>
+                        </button>
+                        <div class="w-px h-3 bg-gray-300 mx-0.5"></div>
+                        <button onclick="window.resetZoomPresentation()" class="p-1 text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors" title="還原大小">
+                            <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+
+                    <!-- 包裝層用於縮放 -->
+                    <div id="presentation-scale-wrapper" class="w-full transition-transform duration-300 transform origin-center">
+                        <div id="presentation-area" class="w-full">
+                            <!-- 圖表由 JS 動態生成 -->
+                        </div>
                     </div>
                 </div>
 
@@ -241,6 +260,7 @@
             isSubmitting: false,
             activeTab: 'manage',
             qrSize: 192,
+            presentationScale: 100, // 圖表縮放比例 (預設 100%)
             
             // 參與者專用狀態（防止重繪干擾）
             lastRenderedQid: null,
@@ -260,6 +280,8 @@
             optionsContainer: document.getElementById('options-container'),
             questionsList: document.getElementById('questions-list'),
             presentationArea: document.getElementById('presentation-area'),
+            presentationScaleWrapper: document.getElementById('presentation-scale-wrapper'),
+            presentationSizeLabel: document.getElementById('presentation-size-label'),
             participantContent: document.getElementById('participant-content'),
             qrCodeImg: document.getElementById('qr-code-img'),
             qrFullscreenImg: document.getElementById('qr-fullscreen-img'),
@@ -367,6 +389,21 @@
         // 後台管理功能 (Admin)
         // ==========================================
         
+        window.zoomPresentation = (delta) => {
+            state.presentationScale += delta;
+            if (state.presentationScale < 50) state.presentationScale = 50; // 最小 50%
+            if (state.presentationScale > 200) state.presentationScale = 200; // 最大 200%
+            
+            els.presentationScaleWrapper.style.transform = `scale(${state.presentationScale / 100})`;
+            els.presentationSizeLabel.textContent = `${state.presentationScale}%`;
+        };
+
+        window.resetZoomPresentation = () => {
+            state.presentationScale = 100;
+            els.presentationScaleWrapper.style.transform = `scale(1)`;
+            els.presentationSizeLabel.textContent = `100%`;
+        };
+
         window.zoomQR = (delta) => {
             state.qrSize += delta;
             if (state.qrSize < 100) state.qrSize = 100;
